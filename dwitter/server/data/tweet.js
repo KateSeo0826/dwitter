@@ -1,112 +1,69 @@
-import { db, sequelize } from '../db/database.js';
-import SQ from 'sequelize';
-import { User } from './auth.js'
-// const SELECT_JOIN = 'SELECT tw.id, tw.text, tw.userId, tw.createAt, us.username, us.name, us.url From tweets as tw JOIN users as us ON tw.userId = us.id'
-// const ORDER_DESC = 'ORDER BY tw.createAt DESC'
-const Sequelize = SQ.Sequelize;
-const DataTypes = SQ.DataTypes;
 
-const Tweet = sequelize.define('tweet', {
-  id: {
-    type: DataTypes.INTEGER,
-    autoIncrement: true,
-    allowNull: false,
-    primaryKey: true
-  },
-  text: {
-    type: DataTypes.TEXT,
-    allowNull: false,
-  },
-})
-Tweet.belongsTo(User);
-const INCLUDE_USER = {
-  attributes: [
-    'id',
-    'text',
-    'createdAt',
-    'userId',
-    [Sequelize.col('user.name'), 'name'],
-    [Sequelize.col('user.username'), 'username'],
-    [Sequelize.col('user.url'), 'url']],
-  include: {
-    model: User,
-    attributes: []
-  },
-
-}
-const ORDER_DESC = {
-  order: [['createdAt', 'DESC']],
-}
+import MongoDB, { ObjectId } from 'mongodb';
+import { getTweets } from '../database/database.js';
+import * as userRepository from './auth.js';
+const ObjectID = MongoDB.ObjectId;
 export async function getAll() {
-  return Tweet.findAll({
-    ...INCLUDE_USER,
-    ...ORDER_DESC,
-  }).then(data => {
-    console.log(data); return data;
-  })
-
-  // return db.execute(
-  //   `${SELECT_JOIN} ${ORDER_DESC}`
-  // ).then(result => result[0])
+    return getTweets()
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray()
+        .then((data) => {
+            return data;
+        })
 }
 
 export async function getAllByUsername(username) {
-
-  return Tweet.findAll({
-    ...INCLUDE_USER,
-    ...ORDER_DESC,
-    include: {
-      ...INCLUDE_USER.include,
-      where: { username }
-    }
-  }).then(data => {
-    console.log(data); return data;
-  })
-
-  // return db.execute(
-  //   `${SELECT_JOIN} WHERE username=?  ${ORDER_DESC}`, [username]
-  // ).then(result => result[0])
+    return getTweets()
+        .find({ username })
+        .sort({ createdAt: -1 })
+        .toArray()
+        .then(mapTweets)
 }
 
 export async function getById(id) {
-  return Tweet.findOne({
-    where: { id },
-    ...INCLUDE_USER,
-  })
-  // return db.execute(
-  //   `${SELECT_JOIN} WHERE tw.id=?  ${ORDER_DESC}`, [id]
-  // ).then(result => result[0][0])
+    return getTweets().findOne({ _id: new ObjectID(id) })
+        .then(mapOptionalTweet)
 }
-
 export async function create(text, userId) {
-  return Tweet.create({ text, userId })
-    .then((data) =>
-      this.getById(data.dataValues.id)
-    )
-  // db.execute(
-  //   'INSERT INTO tweets (text, createAt, userId) VALUES(?,?,?) ',
-  //   [text, new Date(), userId]
-  // ).then(result => getById(result[0].insertId))
+    const { name, username, url } = await userRepository.findById(userId)
+    const tweet = {
+        text,
+        createdAt: new Date(),
+        userId: userId,
+        name: name,
+        username: username,
+        url: url,
+    };
+
+    return getTweets()
+        .insertOne(tweet)
+        .then((data) => {
+            return mapOptionalTweet({ ...tweet, _id: data.insertedId })
+        })
 }
 
 export async function update(id, text) {
-
-  return Tweet.findByPk(id, INCLUDE_USER)
-    .then(tweet => {
-      tweet.text = text;
-      return tweet.save();
-    })
-  // db.execute(
-  //   'UPDATE tweets SET text=? WHERE id=?',
-  //   [text, id]
-  // ).then(() => getById(id))
+    console.log(id, text)
+    return getTweets()
+        .findOneAndUpdate(
+            { _id: new ObjectID(id) },
+            { $set: { text } },
+            { returnDocument: 'after' }
+        )
+        .then(result => result.value)
+        .then(mapOptionalTweet)
 }
+
 
 export async function remove(id) {
-  return Tweet.findByPk(id)
-    .then(tweet => {
-      tweet.destroy();
-    })
-  // return db.execute('DELETE FROM tweets WHERE id=?', [id])
+    return getTweets().deleteOne({ _id: new ObjectID(id) });
+}
+function mapOptionalTweet(tweet) {
+    return tweet ? { ...tweet, id: tweet._id.toString() } : tweet;
 }
 
+function mapTweets(tweets) {
+    // return tweets.map((tweet) => mapOptionalTweet(tweet));
+    return tweets.map(mapOptionalTweet)
+}
